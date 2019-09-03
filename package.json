@@ -1,0 +1,27 @@
+{
+  "name": "prx-ip-filter",
+  "version": "0.0.1",
+  "description": "Utility for filtering traffic using secret lists of IP ranges",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PRX/prx-ip-filter.git"
+  },
+  "keywords": [
+    "ip",
+    "filtering",
+    "cidr"
+  ],
+  "author": "ryan cavis <ryan@prx.org>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/PRX/prx-ip-filter/issues"
+  },
+  "homepage": "https://github.com/PRX/prx-ip-filter#readme",
+  "devDependencies": {
+  },
+  "dependencies": {}
+}
