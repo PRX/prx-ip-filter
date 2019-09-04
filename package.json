@@ -31,5 +31,8 @@
   },
   "peerDependencies": {
     "aws-sdk": "^2.522.0"
+  },
+  "jest": {
+    "watchPathIgnorePatterns": ["tmp/"]
   }
 }

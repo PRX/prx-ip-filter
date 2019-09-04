@@ -1,11 +1,16 @@
 const fs = require('fs');
 const util = require('util');
-const neatCsv = require('neat-csv');
 const ipaddr = require('ipaddr.js');
 const IPCIDR = require('ip-cidr');
+const neatCsv = require('neat-csv');
+const s3 = new (require('aws-sdk')).S3();
 
 /**
  * IP Filtering utility class
+ *
+ * Constructor options:
+ *   logger - log ip parsing/range errors using this function rather than
+ *            throwing them (default: null, meaning throw them)
  */
 module.exports = class PrxIpFilter {
 
@@ -18,14 +23,45 @@ module.exports = class PrxIpFilter {
     return filter;
   }
 
+  static async fromFile(path, options = {}) {
+    const buffer = await util.promisify(fs.readFile)(path);
+    return PrxIpFilter.fromJSON(buffer.toString());
+  }
+
+  static async fromS3CSV(bucket, prefix, options = {}) {
+    const resp = await s3.listObjects({Bucket: bucket, Prefix: prefix}).promise();
+    const keys = resp.Contents.map(c => c.Key).filter(k => k.endsWith('.csv'));
+    const csvs = await Promise.all(keys.map(async (key) => {
+      const csvResp = await s3.getObject({Bucket: bucket, Key: key}).promise();
+      return await neatCsv(csvResp.Body.toString(), {headers: ['0', '1', '2', '3']});
+    }));
+
+    const filter = new PrxIpFilter(options);
+    csvs.forEach(csv => {
+      csv.forEach(row => {
+        if (ipaddr.isValid(row['0']) && ipaddr.isValid(row['1'])) {
+          filter.addRange(row['0'], row['1'], row['2']);
+        } else {
+          filter.addCidr(row['0'], row['1']);
+        }
+      });
+    });
+    return filter;
+  }
+
   constructor(options = {}) {
     this.names = [];
     this.ipv4 = [];
     this.ipv6 = [];
+    this.logger = options.logger || null;
   }
 
   toJSON() {
     return {names: this.names, ipv4: this.ipv4, ipv6: this.ipv6};
+  }
+
+  toFile(path) {
+    return util.promisify(fs.writeFile)(path, JSON.stringify(this));
   }
 
   // match an ip/xff string against database
@@ -61,14 +97,17 @@ module.exports = class PrxIpFilter {
 
   addRange(ipStartString, ipEndString, name = 'unknown') {
     if (!ipaddr.isValid(ipStartString)) {
-      throw new Error(`Invalid IP: ${ipStartString} (${name})`);
+      this.log(`Invalid IP: ${ipStartString} (${name})`);
+      return -1;
     } else if (!ipaddr.isValid(ipEndString)) {
-      throw new Error(`Invalid IP: ${ipEndString} (${name})`);
+      this.log(`Invalid IP: ${ipEndString} (${name})`);
+      return -1;
     } else {
       const ipStart = ipaddr.parse(ipStartString);
       const ipEnd = ipaddr.parse(ipEndString);
       if (ipStart.kind() !== ipEnd.kind()) {
-        throw new Error(`Mismatched IP range: ${ipStartString} - ${ipEndString} (${name})`);
+        this.log(`Mismatched IP range: ${ipStartString} - ${ipEndString} (${name})`);
+        return -1;
       } else {
         const fixedStart = this.ipToFixed(ipStart);
         const fixedEnd = this.ipToFixed(ipEnd);
@@ -80,7 +119,8 @@ module.exports = class PrxIpFilter {
   addCidr(cidrString, name = 'unknown') {
     const cidr = new IPCIDR(cidrString);
     if (!cidr.isValid()) {
-      throw new Error(`Invalid CIDR: ${cidrString} (${name})`);
+      this.log(`Invalid CIDR: ${cidrString} (${name})`);
+      return -1;
     } else {
       return this.addRange(cidr.start(), cidr.end(), name);
     }
@@ -107,10 +147,12 @@ module.exports = class PrxIpFilter {
     } else if (ipStart.length === 39 && ipEnd.length === 39) {
       list = this.ipv6;
     } else {
-      throw new Error(`Invalid Fixed IP Range: ${ipStart} - ${ipEnd} (${name})`);
+      this.log(`Invalid Fixed IP Range: ${ipStart} - ${ipEnd} (${name})`);
+      return -1;
     }
     if (ipStart > ipEnd) {
-      throw new Error(`Non-sequential IP Range: ${ipStart} - ${ipEnd} (${name})`)
+      this.log(`Non-sequential IP Range: ${ipStart} - ${ipEnd} (${name})`)
+      return -1;
     }
 
     // search for space in list
@@ -121,8 +163,9 @@ module.exports = class PrxIpFilter {
       } else if (ipStart > list[idx][1]) {
         // keep looking
       } else {
-        throw new Error(`IP Range Conflict: [${ipStart}, ${ipEnd}, ${name}] ` +
+        this.log(`IP Range Conflict: [${ipStart}, ${ipEnd}, ${name}] ` +
           `conflicts with [${list[idx][0]}, ${list[idx][1]}, ${list[idx][2]}]`);
+        return -1;
       }
     }
     list.splice(idx, 0, [ipStart, ipEnd, this.addNameIndex(name)]);
@@ -138,4 +181,22 @@ module.exports = class PrxIpFilter {
     return idx;
   }
 
+  log(message) {
+    if (this.logger) {
+      this.logger(message);
+    } else {
+      throw new PrxIpFilterError(message);
+    }
+  }
+
 }
+
+/**
+ * Custom error override
+ */
+function PrxIpFilterError(message) {
+  this.name = 'PrxIpFilterError';
+  this.message = message;
+  this.stack = (new Error()).stack;
+}
+PrxIpFilterError.prototype = new Error;

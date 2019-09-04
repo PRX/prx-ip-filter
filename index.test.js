@@ -1,6 +1,11 @@
+const fs = require('fs');
+const util = require('util');
 const PrxIpFilter = require('./index');
 
-describe('index', () => {
+describe('PrxIpFilter', () => {
+
+  // skip s3 tests without creds
+  const itHasS3Creds = (process.env.TEST_S3_BUCKET && process.env.TEST_S3_PREFIX) ? it : xit;
 
   let filter;
   beforeEach(() => filter = new PrxIpFilter());
@@ -76,14 +81,25 @@ describe('index', () => {
     expect(filter.stringToCleanIp(', , 66.6.44.4 ,99.99.99.99').octets).toEqual([66, 6, 44, 4]);
   });
 
-  it('round trips json', () => {
-    filter.addRange('1.2.3.4', '1.2.3.5', 'Foo');
-    filter.addRange('1234:5:6::', '1234:5:7::', 'Bar');
-    const json = JSON.stringify(filter);
-    const filter2 = PrxIpFilter.fromJSON(json);
-    expect(filter.names).toEqual(filter2.names);
-    expect(filter.ipv4).toEqual(filter2.ipv4);
-    expect(filter.ipv6).toEqual(filter2.ipv6);
+  it('logs errors instead of throwing them', () => {
+    const messages = [];
+    const filter2 = new PrxIpFilter({logger: m => messages.push(m)});
+
+    expect(filter2.addRange('foo', 'bar')).toEqual(-1);
+    expect(messages[0]).toMatch(/invalid ip/i);
+
+    expect(filter2.addCidr('foo')).toEqual(-1);
+    expect(messages[1]).toMatch(/invalid cidr/i);
+
+    expect(filter2.addRange('2.2.2.2', '2.2.3.3')).toEqual(0);
+    expect(filter2.addRange('1.2.3.4', '2.2.2.2')).toEqual(-1);
+    expect(messages[2]).toMatch(/range conflict/i);
+
+    expect(filter2.addRange('2.2.2.10', '2.2.2.12')).toEqual(-1);
+    expect(messages[3]).toMatch(/range conflict/i);
+
+    expect(filter2.addRange('2.2.2.12', '2.2.4.4')).toEqual(-1);
+    expect(messages[4]).toMatch(/range conflict/i);
   });
 
   describe('with some filter ranges', () => {
@@ -132,6 +148,34 @@ describe('index', () => {
         end: '001.001.002.002',
         name: 'One'
       });
+    });
+
+    it('round trips json', () => {
+      const json = JSON.stringify(filter);
+      const filter2 = PrxIpFilter.fromJSON(json);
+
+      expect(filter.names).toEqual(filter2.names);
+      expect(filter.ipv4).toEqual(filter2.ipv4);
+      expect(filter.ipv6).toEqual(filter2.ipv6);
+    });
+
+    it('round trips to a file', async () => {
+      await util.promisify(fs.mkdir)(`${__dirname}/tmp`).catch(e => null);
+      await util.promisify(fs.unlink)(`${__dirname}/tmp/db.json`).catch(e => null);
+
+      await filter.toFile(`${__dirname}/tmp/db.json`);
+      const filter2 = await PrxIpFilter.fromFile(`${__dirname}/tmp/db.json`);
+
+      expect(filter.names).toEqual(filter2.names);
+      expect(filter.ipv4).toEqual(filter2.ipv4);
+      expect(filter.ipv6).toEqual(filter2.ipv6);
+    });
+
+    itHasS3Creds('loads from S3 csv files', async () => {
+      const filter2 = await PrxIpFilter.fromS3CSV(process.env.TEST_S3_BUCKET, process.env.TEST_S3_PREFIX);
+      expect(filter2.names.length).toBeGreaterThan(0);
+      expect(filter2.ipv4.length).toBeGreaterThan(0);
+      expect(filter2.ipv6.length).toBeGreaterThan(0);
     });
 
   });
