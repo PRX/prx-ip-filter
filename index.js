@@ -3,7 +3,13 @@ const util = require('util');
 const ipaddr = require('ipaddr.js');
 const IPCIDR = require('ip-cidr');
 const neatCsv = require('neat-csv');
-const s3 = new (require('aws-sdk')).S3();
+
+// optional s3
+let s3 = null;
+try {
+  require.resolve('aws-sdk');
+  s3 = new (require('aws-sdk')).S3();
+} catch(e) {}
 
 /**
  * IP Filtering utility class
@@ -29,6 +35,9 @@ module.exports = class PrxIpFilter {
   }
 
   static async fromS3CSV(bucket, prefix, options = {}) {
+    if (!s3) {
+      throw new PrxIpFilterError('aws-sdk not available');
+    }
     const resp = await s3.listObjects({Bucket: bucket, Prefix: prefix}).promise();
     const keys = resp.Contents.map(c => c.Key).filter(k => k.endsWith('.csv'));
     const csvs = await Promise.all(keys.map(async (key) => {
