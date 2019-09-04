@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/PRX/prx-ip-filter#readme",
   "devDependencies": {
+    "aws-sdk": "^2.522.0",
     "jest": "^24.9.0"
   },
   "dependencies": {
@@ -30,9 +31,11 @@
     "neat-csv": "^5.1.0"
   },
   "peerDependencies": {
-    "aws-sdk": "^2.522.0"
+    "aws-sdk": ">=2.0.0"
   },
   "jest": {
-    "watchPathIgnorePatterns": ["tmp/"]
+    "watchPathIgnorePatterns": [
+      "tmp/"
+    ]
   }
 }
